@@ -1,0 +1,93 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# Goal:
+# load multiple xml files, convert them to one json file that is readable by CreateML or turicreate
+
+
+# import TuriCreate
+import turicreate as tc
+# import XML dictionary and JSON functionality 
+import xmldict
+import json
+# import os functionality
+import os
+# import pathlib functionality
+from pathlib import Path
+
+
+# Function to read XML file to dictionary
+def xml_filename_to_dict(filename):
+    """
+    Reads the contents of an XML file, parses it and returns a dictionary.
+    >>> xml_filename_to_dict('file-1.xml')
+    {'foo': 'bar'}
+    """
+
+    # Step 1: Read the contents of the file into a string
+    xml_file = open(filename).readlines()
+    xml_file_asString = '\n'.join(xml_file)
+
+    # Step 2: Convert the contents of the XML file into a dictionary
+    return xmldict.xml_to_dict(xml_file_asString)
+
+
+# How to format JSON for MLObjectDetector
+# https://developer.apple.com/documentation/createml/mlobjectdetector/datasource
+
+# walk through dicts and create list of JSONs
+# walk through the folder and fill the dictionary
+directory = "/Users/test/Machine Learning/images/test/"
+fileName = "CreateML.annotations.json"
+sframeBin = "SFrame.annotations"
+jsonFile = os.path.join(directory, fileName)
+sframeFile = os.path.join(directory, sframeBin)
+
+
+# read all XML files and create a python dictionary
+xmlDict = dict()
+for file in os.listdir(directory):
+    if file.endswith(".xml"):
+        name = os.path.splitext(file)[0] # get the first part of the result: ('file', '.ext')
+        url = os.path.join(directory, file)
+        jsonXML = xml_filename_to_dict(url);
+        xmlDict.update([ (url, jsonXML) ])
+
+
+# parse the dictionary and create CreateML formatted JSON
+createMLjson = []
+for key, value in xmlDict.items():
+    objects = xmlDict[key]['annotation']['object']
+    imagefilename = xmlDict[key]['annotation']['filename']
+    path = xmlDict[key]['annotation']['path']
+    xmlPath = key
+    annotation = []
+    for key in objects:
+        label = key['name']
+        bndbox = key['bndbox']
+        y = (int(bndbox['ymin']) + int(bndbox['ymax'])) / 2
+        x = (int(bndbox['xmin']) + int(bndbox['xmax'])) / 2
+        height = int(bndbox['ymax']) - int(bndbox['ymin'])
+        width = int(bndbox['xmax']) - int(bndbox['xmin'])
+        # format annotation
+        annotation.append({ 'label': label, 'coordinates': {"y":y, "x":x, "height":height, "width":width} })
+    # add annotation to list of annotations
+    createMLjson.append({'imagefilename' : imagefilename,'path':path, 'annotation': annotation})
+
+
+# write the whole JSON annotation list to a file
+with open(jsonFile, 'w') as outfile:
+    json.dump(createMLjson, outfile)
+#!cat "/Users/bas/ownCloud/Code/Machine Learning/images/test/CreateML.annotations.json"
+
+
+# load JSON
+data = tc.SFrame.read_json(jsonFile)
+# add images to SFrame
+data['image'] = data['path'].apply(lambda img: tc.Image(img))
+# add annotation frame to image
+data['image_with_ground_truth'] = tc.object_detector.util.draw_bounding_boxes(data['image'], data['annotation'])
+# check the data
+data[{'imagefilename', 'image_with_ground_truth'}].explore()
+# save all data as SFrame
+data.save(sframeFile)
